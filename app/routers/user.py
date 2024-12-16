@@ -1,86 +1,72 @@
-from fastapi import APIRouter, Depends, status, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from fastapi.security import OAuth2PasswordRequestForm
 from app.backend.db_depends import get_db
 from typing import Annotated
-from app.models import User, Task
-from app.schemas import CreateUser, UpdateUser
-from sqlalchemy import insert, select, update, delete
-from slugify import slugify
+from app.models import User
+from app.schemas import UserCreate, UserResponse
+from app.protection import get_password_hash, create_access_token, get_user_by_token, verify_password
+
+router = APIRouter(tags=["user"])
 
 
-router = APIRouter(prefix="/user", tags=["user"])
+@router.post("/register/", response_model=UserResponse)
+def create_user(user: UserCreate, db: Session = Depends(get_db)):
+    """
+    Создает нового пользователя.
 
+    Args:
+        user (UserCreate): Данные для создания пользователя.
+        db (Session, optional): Сессия базы данных. Defaults to Depends(get_db).
 
-@router.get("/")
-async def all_users(db: Annotated[Session, Depends(get_db)]):
-    users_all = db.scalars(select(User)).all()
-    return users_all
-
-
-@router.get("/user_id")
-async def user_by_id(user_id: int, db: Annotated[Session, Depends(get_db)]):
-    choice_user = db.scalars(select(User).where(User.id == user_id)).first()
-
-    if choice_user is not None:
-
-        return choice_user
-    else:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User was not found")
-
-
-@router.get("/user_id/tasks")
-async def tasks_by_user_id(user_id: int, db: Annotated[Session, Depends(get_db)]):
-    tasks_all = db.scalars(select(Task).where(Task.user_id == user_id)).all()
-    return tasks_all
-
-
-@router.post("/create")
-async def create_user(db: Annotated[Session, Depends(get_db)], user_create: CreateUser):
-    try:
-        db.execute(
-            insert(User).values(
-                username=user_create.username,
-                firstname=user_create.firstname,
-                lastname=user_create.lastname,
-                age=user_create.age,
-                slug=slugify(user_create.username)
-            )
-        )
-        db.commit()
-        return {
-            'status_code': status.HTTP_201_CREATED, 'transaction': 'Successful'
-        }
-    except Exception as e:
-        print(f"Ошибка при создании пользователя: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
-
-
-@router.put("/update")
-async def update_user(db: Annotated[Session, Depends(get_db)], user_update: UpdateUser, user_id: int ):
-    result = db.execute(
-        update(User).where(User.id == user_id).values(
-            firstname=user_update.firstname,
-            lastname=user_update.lastname,
-            age=user_update.age
-        )
-    )
+    Returns:
+        UserResponse: Созданный пользователь.
+    """
+    db_user = User(username=user.username, email=user.email, hashed_password=get_password_hash(user.password))
+    db.add(db_user)
     db.commit()
-    if result.rowcount > 0:
-        return {'status_code': status.HTTP_200_OK, 'transaction': 'User update is successful!'}
-    else:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User was not found")
+    db.refresh(db_user)
+    return db_user
 
 
+@router.post("/api/v1/login/")
+def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: Session = Depends(get_db)):
+    """
+    Аутентифицирует пользователя и возвращает токен доступа.
 
-@router.delete("/delete")
-async def delete_user(user_id: int, db: Annotated[Session, Depends(get_db)]):
-    result = db.query(User).filter(User.id == user_id).first()
+    Args:
+        form_data (Annotated[OAuth2PasswordRequestForm, Depends]): Данные для аутентификации.
+        db (Session, optional): Сессия базы данных. Defaults to Depends(get_db).
 
-    if result:
-        db.query(Task).filter(Task.user_id == user_id).delete(synchronize_session='fetch')
-        db.delete(result)
-        db.commit()
-        return {'status_code': status.HTTP_200_OK, 'transaction': 'User delete is successful!'}
-    else:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User was not found")
+    Returns:
+        dict: Токен доступа и его тип.
 
+    Raises:
+        HTTPException: Если данные не верны.
+    """
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Bearer"})
+    jwt_token = create_access_token({"sub": form_data.username})
+    return {"access_token": jwt_token, "token_type": "bearer"}
+
+
+@router.get("/about_me/", response_model=UserResponse)
+def read_user(db: Session = Depends(get_db), username: str = Depends(get_user_by_token)):
+    """
+    Возвращает информацию о текущем пользователе.
+
+    Args:
+        db (Session, optional): Сессия базы данных. Defaults to Depends(get_db).
+        username (str, optional): Имя пользователя из токена. Defaults to Depends(get_user_by_token).
+
+    Returns:
+        UserResponse: Информация о пользователе.
+
+    Raises:
+        HTTPException: Если пользователь не найден.
+    """
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user

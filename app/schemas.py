@@ -1,24 +1,31 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
-class CreateUser(BaseModel):
+
+class UserCreate(BaseModel):
     username: str
-    firstname: str
-    lastname: str
-    age: int
+    email: EmailStr = None
+    password: str
 
 
-class UpdateUser(BaseModel):
-    firstname: str
-    lastname: str
-    age: int
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: str
 
 
-class CreateTask(BaseModel):
+class TaskCreate(BaseModel):
     title: str
-    content: str
-    priority: int
+    description: str
 
-class UpdateTask(BaseModel):
+
+class TaskUpdate(BaseModel):
     title: str
-    content: str
-    priority: int
+    description: str
+    completed: bool
+
+
+class TaskResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    completed: bool

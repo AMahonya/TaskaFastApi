@@ -1,5 +1,6 @@
 from app.backend.db import SessionLocal
 
+
 async def get_db():
     db = SessionLocal()
     try:
